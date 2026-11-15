@@ -24,6 +24,14 @@
 - Round 2 (2-detail vs starter): Tie (1 win each)
 - Round 3 (3-filtered vs starter): B (1 win, 1 rate-limit error 429)
 - Text-side comparison: Tie (robust state management, zero network dependency, clean dark-mode UI).
+- **Round 2 Calibration (Follow-Up):**
+  - 1-board vs starter: **A won (2–0)** (polished dark-mode UI, clear summary cards, robust filters).
+  - 2-detail vs starter: **Tie (1 win each)**.
+  - 3-filtered vs starter: **B won (2–0)**.
+  - Judge-prompt variation check (reworded criterion on 1-board): B won (2–0).
+  - Screenshot sizes tuned to target range: `1-board.png` 345.3 KB, `2-detail.png` 342.3 KB, `3-filtered.png` 339.7 KB (1440x900, under 512 KiB hard cap).
+- **Blind Manual Review vs RULES.txt:**
+  - Evaluated against `RULES.txt` specifications: covers all 40 watchlist protocols plus 160 early pre-token protocols (total 200 ranked rows), strictly follows sealed input snapshot data, uses shrinkage-calibrated category multiples ($k=5$), includes 6 step farm plans per protocol (20–600 chars each), zero network requests, complete offline bundle, and fully compliant dossier structure. Meets all functional and structural requirements.
 
 ## 4. Verification Results
 - (a) Double-run byte-identical: Verified (`board.json`, `data.js`, `dossier.json` match across independent runs).
