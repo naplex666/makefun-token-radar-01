@@ -1,401 +1,226 @@
-(function () {
-  const RADAR = window.RADAR;
-  if (!RADAR) {
-    document.getElementById('app').innerHTML = '<div style="padding:2rem;color:#f87171;">Error: RADAR data not loaded.</div>';
+(() => {
+  const get = id => document.getElementById(id);
+  const data = window.RADAR;
+  if (!data) {
+    get('missing').hidden = false;
     return;
   }
 
-  function formatUSD(n) {
-    if (n === null || n === undefined) return 'N/A';
-    if (n >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
-    if (n >= 1e6) return '$' + (n / 1e6).toFixed(2) + 'M';
-    if (n >= 1e3) return '$' + (n / 1e3).toFixed(1) + 'K';
-    return '$' + n.toLocaleString();
+  const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 2 });
+  const exact = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+  const usd = n => n == null ? 'Unreported' : money.format(n);
+  const pct = n => n == null ? 'Unreported' : `${n > 0 ? '+' : ''}${n.toFixed(1)}%`;
+  const factor = n => `${n.toFixed(3)}×`;
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const category = r => r.category || 'Uncategorized';
+  const pageSize = 8;
+  const filters = ['search', 'status', 'category', 'chain', 'watch'];
+  const index = new Map([...data.rows, ...data.recorded].map(row => [row.slug, row]));
+  let page = 0;
+  let sortKey = 'rank';
+  let direction = 1;
+
+  get('date').textContent = data.as_of;
+  get('date').dateTime = data.as_of;
+  const early = () => get('status').value === 'early';
+  const universe = () => early() ? data.rows : data.recorded;
+
+  function options(id, values, label) {
+    const control = get(id);
+    const previous = control.value;
+    const unique = [...new Set(values)].sort((a, b) => a.localeCompare(b));
+    control.replaceChildren(new Option(label, ''), ...unique.map(v => new Option(v, v)));
+    if (unique.includes(previous)) control.value = previous;
   }
 
-  function formatPct(n) {
-    if (n === null || n === undefined) return '0.0%';
-    const sign = n > 0 ? '+' : '';
-    return sign + n.toFixed(1) + '%';
+  function updateOptions() {
+    options('category', universe().map(category), 'All categories');
+    options('chain', universe().flatMap(r => r.chains), 'All chains');
+    get('watch').disabled = !early();
+    if (!early()) get('watch').checked = false;
   }
 
-  function parseHash() {
-    const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
-    const params = new URLSearchParams(hash);
-    return {
-      view: params.get('view') || 'board',
-      slug: params.get('slug') || '',
-      category: params.get('category') || '',
-      chain: params.get('chain') || '',
-      search: params.get('search') || '',
-      sort: params.get('sort') || 'rank',
-      min_tvl: params.get('min_tvl') || '0'
-    };
+  function filtered() {
+    const query = get('search').value.trim().toLowerCase();
+    const cat = get('category').value;
+    const chain = get('chain').value;
+    return universe().filter(r =>
+      (!query || `${r.name} ${r.slug}`.toLowerCase().includes(query)) &&
+      (!cat || category(r) === cat) &&
+      (!chain || r.chains.includes(chain)) &&
+      (!get('watch').checked || r.watchlist)
+    );
   }
 
-  function setHash(newState) {
-    const current = parseHash();
-    const merged = Object.assign({}, current, newState);
-    const params = new URLSearchParams();
-    for (const [k, v] of Object.entries(merged)) {
-      if (v && v !== '0' && v !== 'rank' && !(k === 'slug' && merged.view !== 'detail') && !(k === 'view' && v === 'board')) {
-        params.set(k, v);
-      }
-    }
-    if (merged.view === 'detail' && merged.slug) {
-      params.set('view', 'detail');
-      params.set('slug', merged.slug);
-    } else if (merged.view === 'live') {
-      params.set('view', 'live');
-    } else if (merged.view === 'model') {
-      params.set('view', 'model');
-    } else {
-      params.delete('slug');
-      if (merged.view && merged.view !== 'board') {
-        params.set('view', merged.view);
-      } else {
-        params.delete('view');
-      }
-    }
-    const str = params.toString();
-    window.location.hash = str ? '#' + str : '';
+  function kpis(pairs) {
+    return pairs.map(([label, value]) => `<div class="kpi"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join('');
   }
 
-  function renderHeader() {
-    const state = parseHash();
-    return `
-      <header>
-        <div class="header-inner">
-          <div class="brand">
-            <div class="brand-icon">TR</div>
-            <div class="brand-title">
-              <h1>Token Launch Radar</h1>
-              <span>Make.fun Bounty token-radar-01 • ${RADAR.model_version} • As of ${RADAR.as_of}</span>
-            </div>
-          </div>
-          <nav class="tabs">
-            <button class="${state.view === 'board' ? 'active' : ''}" onclick="window.RADAR_NAV('board')">Radar Board (${RADAR.board_size})</button>
-            <button class="${state.view === 'live' ? 'active' : ''}" onclick="window.RADAR_NAV('live')">Live Market (${RADAR.live_size})</button>
-            <button class="${state.view === 'model' ? 'active' : ''}" onclick="window.RADAR_NAV('model')">Model & Multiples</button>
-          </nav>
-        </div>
-      </header>
-    `;
+  function renderStats(rows) {
+    const tvls = rows.map(r => r.tvl_usd).sort((a, b) => a - b);
+    const mid = Math.floor(tvls.length / 2);
+    const median = !tvls.length ? null : (tvls[mid] + tvls[Math.floor((tvls.length - 1) / 2)]) / 2;
+    const values = rows.map(r => early() ? r.implied_value_usd : r.mcap_usd).filter(n => n != null);
+    get('stats').innerHTML = kpis([
+      ['Matching protocols', rows.length],
+      early() ? ['Watchlist coverage in view', `${rows.filter(r => r.watchlist).length} / ${data.watchlist_size}`] :
+        ['With reported market cap', values.length],
+      ['Median TVL', median == null ? '—' : usd(median)],
+      [early() ? 'Highest implied value' : 'Highest market cap', values.length ? usd(Math.max(...values)) : '—'],
+    ]);
   }
 
-  window.RADAR_NAV = function (view) {
-    setHash({ view: view, slug: '' });
-  };
-
-  function renderBoard() {
-    const state = parseHash();
-    let rows = [...RADAR.rows];
-
-    if (state.category) {
-      rows = rows.filter(r => r.category === state.category);
-    }
-    if (state.chain) {
-      rows = rows.filter(r => r.chains && r.chains.includes(state.chain));
-    }
-    if (state.search) {
-      const q = state.search.toLowerCase();
-      rows = rows.filter(r => r.name.toLowerCase().includes(q) || r.slug.toLowerCase().includes(q) || (r.category && r.category.toLowerCase().includes(q)));
-    }
-    const minTvlNum = parseFloat(state.min_tvl) || 0;
-    if (minTvlNum > 0) {
-      rows = rows.filter(r => r.tvl_usd >= minTvlNum);
+  // Both data sets arrive sorted by their own value. Select leaders from the
+  // filtered set before table sorting so the chart remains a value comparison.
+  function renderPlot(rows) {
+    get('chart-title').textContent = early() ? 'Launch value ranges' : 'Recorded market caps';
+    get('chart-note').textContent = early()
+      ? 'Five highest matches. Dot = implied value, band = middle 50% of peer estimates.'
+      : 'Five highest matches with a reported market cap.';
+    const leaders = rows.filter(r => early() || r.mcap_usd > 0).slice(0, 5);
+    const plot = get('plot');
+    if (!leaders.length) {
+      plot.innerHTML = '<p>No values to plot for this view.</p>';
+      return;
     }
 
-    if (state.sort === 'implied') {
-      rows.sort((a, b) => b.implied_value_usd - a.implied_value_usd || a.rank - b.rank);
-    } else if (state.sort === 'tvl') {
-      rows.sort((a, b) => b.tvl_usd - a.tvl_usd || a.rank - b.rank);
-    } else if (state.sort === 'change') {
-      rows.sort((a, b) => (b.change_7d ?? 0) - (a.change_7d ?? 0) || a.rank - b.rank);
-    } else {
-      rows.sort((a, b) => a.rank - b.rank);
-    }
-
-    const categories = [...new Set(RADAR.rows.map(r => r.category).filter(Boolean))].sort();
-    const allChains = new Set();
-    RADAR.rows.forEach(r => { if (r.chains) r.chains.forEach(c => allChains.add(c)); });
-    const chains = [...allChains].sort();
-
-    const totalImplied = RADAR.rows.reduce((sum, r) => sum + r.implied_value_usd, 0);
-
-    return `
-      ${renderHeader()}
-      <main>
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="label">Watchlist Coverage</div>
-            <div class="value">${RADAR.watchlist_size} Slugs</div>
-          </div>
-          <div class="stat-card">
-            <div class="label">Ranked Board Rows</div>
-            <div class="value">${RADAR.board_size} Protocols</div>
-          </div>
-          <div class="stat-card">
-            <div class="label">Early Pre-Token Radar</div>
-            <div class="value">${RADAR.early_size} Protocols</div>
-          </div>
-          <div class="stat-card">
-            <div class="label">Total Implied Value</div>
-            <div class="value" style="color:var(--accent);">${formatUSD(totalImplied)}</div>
-          </div>
-        </div>
-
-        <div class="controls-bar">
-          <input type="text" id="searchInput" placeholder="Search pre-token protocols, slugs or categories..." value="${state.search}" oninput="window.RADAR_FILTER('search', this.value)">
-          <select id="catSelect" onchange="window.RADAR_FILTER('category', this.value)">
-            <option value="">All Categories (${RADAR.board_size})</option>
-            ${categories.map(c => `<option value="${c}" ${state.category === c ? 'selected' : ''}>${c}</option>`).join('')}
-          </select>
-          <select id="chainSelect" onchange="window.RADAR_FILTER('chain', this.value)">
-            <option value="">All Chains</option>
-            ${chains.map(ch => `<option value="${ch}" ${state.chain === ch ? 'selected' : ''}>${ch}</option>`).join('')}
-          </select>
-          <select id="sortSelect" onchange="window.RADAR_FILTER('sort', this.value)">
-            <option value="rank" ${state.sort === 'rank' ? 'selected' : ''}>Sort: Radar Rank</option>
-            <option value="implied" ${state.sort === 'implied' ? 'selected' : ''}>Sort: Implied Value</option>
-            <option value="tvl" ${state.sort === 'tvl' ? 'selected' : ''}>Sort: TVL</option>
-            <option value="change" ${state.sort === 'change' ? 'selected' : ''}>Sort: 7d Change</option>
-          </select>
-        </div>
-
-        <div class="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>Rank</th>
-                <th>Protocol</th>
-                <th>Category</th>
-                <th>Chains</th>
-                <th>TVL</th>
-                <th>7d Change</th>
-                <th>Implied Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows.length === 0 ? '<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--text-muted);">No protocols match the filter criteria.</td></tr>' : ''}
-              ${rows.map(r => `
-                <tr onclick="window.RADAR_DETAIL('${r.slug}')">
-                  <td><strong>#${r.rank}</strong></td>
-                  <td><strong>${r.name}</strong> <span style="font-size:0.75rem;color:var(--text-muted)">(${r.slug})</span></td>
-                  <td><span class="badge cat">${r.category || 'Other'}</span></td>
-                  <td>${r.chains ? r.chains.slice(0, 3).join(', ') : ''}</td>
-                  <td>${formatUSD(r.tvl_usd)}</td>
-                  <td class="${(r.change_7d ?? 0) >= 0 ? 'positive' : 'negative'}">${formatPct(r.change_7d)}</td>
-                  <td class="implied-val">${formatUSD(r.implied_value_usd)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      </main>
-    `;
+    const largest = Math.max(...leaders.map(r => early() ? r.model.high : r.mcap_usd));
+    const unit = 10 ** Math.floor(Math.log10(largest));
+    const tick = [0.25, 0.5, 1, 2.5].map(n => n * unit).find(n => n * 4 >= largest);
+    const position = n => 100 * n / (tick * 4);
+    plot.innerHTML = leaders.map(r => {
+      const value = early() ? r.implied_value_usd : r.mcap_usd;
+      const left = early() ? position(r.model.low) : 0;
+      const right = early() ? position(r.model.high) : position(value);
+      const label = early() ? `${usd(r.model.low)} to ${usd(r.model.high)}; estimate ${usd(value)}` : usd(value);
+      return `<div class="plot-row" data-watch="${Boolean(r.watchlist)}">
+        <button class="plot-name" data-slug="${esc(r.slug)}" title="${esc(label)}">${esc(r.name)}</button>
+        <div class="track" aria-hidden="true"><span class="range" style="left:${left}%;width:${right - left}%"></span>
+        <span class="marker" style="left:${position(value)}%"></span></div>
+        <strong>${usd(value)}</strong>
+      </div>`;
+    }).join('') + `<div class="plot-row" aria-hidden="true"><span></span><div class="axis">${[0, 1, 2, 3, 4].map(i => `<span>${usd(i * tick)}</span>`).join('')}</div></div>`;
   }
 
-  window.RADAR_FILTER = function (key, val) {
-    const obj = {};
-    obj[key] = val;
-    setHash(obj);
-  };
-
-  window.RADAR_DETAIL = function (slug) {
-    setHash({ view: 'detail', slug: slug });
-  };
-
-  function renderDetail() {
-    const state = parseHash();
-    const row = RADAR.rows.find(r => r.slug === state.slug) || RADAR.rows[0];
-    if (!row) {
-      return renderBoard();
-    }
-
-    const baseVal = row.tvl_usd * row.category_multiple;
-    const growthFactor = row.growth_multiplier;
-    const maturityFactor = row.maturity_multiplier;
-
-    // Generate farm steps dynamically if not stored, or use row
-    const capitalTier = row.tvl_usd >= 100e6 ? '$250' : row.tvl_usd >= 10e6 ? '$150' : row.tvl_usd >= 1e6 ? '$100' : '$50';
-    const holdDays = (row.age_days ?? 365) < 90 ? 60 : (row.age_days ?? 365) >= 365 ? 30 : 45;
-    const chain = row.chains && row.chains.length > 0 ? row.chains[0] : 'Ethereum';
-
-    return `
-      ${renderHeader()}
-      <main>
-        <div class="detail-view">
-          <div class="detail-header">
-            <div class="detail-title">
-              <span class="badge cat" style="margin-bottom:0.5rem;display:inline-block;">Rank #${row.rank} • ${row.category || 'DeFi'}</span>
-              <h2>${row.name}</h2>
-              <div style="color:var(--text-muted);font-size:0.85rem;">Slug: <code>${row.slug}</code> • Chains: ${row.chains.join(', ')} • Listed: ${row.listed_at || 'Unknown'} (${row.age_days ?? 365} days active)</div>
-            </div>
-            <button class="back-btn" onclick="window.RADAR_NAV('board')">← Back to Board</button>
-          </div>
-
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;margin-bottom:1.5rem;">
-            <div class="stat-card">
-              <div class="label">Total Value Locked (TVL)</div>
-              <div class="value">${formatUSD(row.tvl_usd)}</div>
-            </div>
-            <div class="stat-card">
-              <div class="label">Category Multiple</div>
-              <div class="value" style="color:var(--accent);">${row.category_multiple.toFixed(3)
-              }x <span style="font-size:0.75rem;color:var(--text-muted);">(n=${row.sample_size}${row.used_fallback ? ', fallback' : ', shrunken k=5'})</span></div>
-            </div>
-            <div class="stat-card">
-              <div class="label">7d Growth Change</div>
-              <div class="value ${(row.change_7d ?? 0) >= 0 ? 'positive' : 'negative'}">${formatPct(row.change_7d)}</div>
-            </div>
-            <div class="stat-card">
-              <div class="label">Implied Token Value</div>
-              <div class="value" style="color:var(--success);">${formatUSD(row.implied_value_usd)}</div>
-            </div>
-          </div>
-
-          <h3 style="font-size:1.1rem;margin-bottom:0.5rem;color:var(--accent);">Implied Value Formula Breakdown</h3>
-          <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.75rem;">Formula: <code>TVL × Category Multiple × Growth Multiplier × Maturity Multiplier = Implied Value</code></p>
-          
-          <div class="formula-box">
-            <div class="formula-row"><span>TVL</span><span>${formatUSD(row.tvl_usd)}</span></div>
-            <div class="formula-row"><span>Category Multiple (${row.category || 'Uncategorized'}, n=${row.sample_size}${row.used_fallback ? ', fallback' : ''})</span><span>× ${row.category_multiple.toFixed(3)}</span></div>
-            <div class="formula-row"><span>Base Valuation (TVL × Multiple)</span><span>= ${formatUSD(baseVal)}</span></div>
-            <div class="formula-row"><span>Growth Multiplier (7d change ${formatPct(row.change_7d)})</span><span>× ${growthFactor.toFixed(4)}</span></div>
-            <div class="formula-row"><span>Maturity Multiplier (${row.age_days ?? 365} days age)</span><span>× ${maturityFactor.toFixed(4)}</span></div>
-            <div class="formula-row"><span>Final Implied Token Value</span><span>= ${formatUSD(row.implied_value_usd)}</span></div>
-          </div>
-
-          <h3 style="font-size:1.1rem;margin-top:2rem;margin-bottom:0.5rem;color:var(--accent);">Execution Farm Plan (6 Steps)</h3>
-          <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:1rem;">Tailored positioning plan for ${row.name} on ${chain} (Capital allocation tier: ${capitalTier}, Target hold duration: ${holdDays} days).</p>
-          
-          <div class="farm-steps-list">
-            <div class="farm-step-card">
-              <div class="step-num">1</div>
-              <div class="step-text">Connect non-custodial Web3 wallet to ${row.name} on ${chain} network with ${capitalTier} allocated capital. Cost: ~$2 gas. Time: ~5 mins.</div>
-            </div>
-            <div class="farm-step-card">
-              <div class="step-num">2</div>
-              <div class="step-text">Supply/deposit ${capitalTier} into ${row.name}'s core vaults and active liquidity pools on ${chain}. Cost: $${capitalTier.slice(1)} position + gas. Time: ~10 mins.</div>
-            </div>
-            <div class="farm-step-card">
-              <div class="step-num">3</div>
-              <div class="step-text">Perform weekly qualifying activity such as governance voting, yield compounding, or interacting with sub-contracts on ${row.name}. Cost: ~$1 gas/week. Time: ~5 mins/week.</div>
-            </div>
-            <div class="farm-step-card">
-              <div class="step-num">4</div>
-              <div class="step-text">Maintain position continuously for at least ${holdDays} days to satisfy protocol activity history and snapshot eligibility requirements. Cost: $0 ongoing. Time: Passive.</div>
-            </div>
-            <div class="farm-step-card">
-              <div class="step-num">5</div>
-              <div class="step-text">Claim safety verification: check published links on ${row.name}'s official domain only; never pay fees to claim points or tokens. Cost: Free. Time: ~2 mins.</div>
-            </div>
-            <div class="farm-step-card">
-              <div class="step-num">6</div>
-              <div class="step-text">Maintain farm log recording deposit hashes, weekly interaction history, and plan orderly exit upon protocol TGE announcement. Cost: Free. Time: ~5 mins.</div>
-            </div>
-          </div>
-        </div>
-      </main>
-    `;
+  function sortRows(rows) {
+    return [...rows].sort((a, b) => {
+      const x = sortKey === 'category' ? category(a) : a[sortKey];
+      const y = sortKey === 'category' ? category(b) : b[sortKey];
+      if (x == null || y == null) return (x == null) - (y == null);
+      const cmp = typeof x === 'string' ? x.localeCompare(y) : x - y;
+      return direction * cmp;
+    });
   }
 
-  function renderLive() {
-    return `
-      ${renderHeader()}
-      <main>
-        <div style="margin-bottom:1.5rem;">
-          <h2 style="font-size:1.5rem;margin-bottom:0.25rem;">Live Market Token View (${RADAR.live.length} protocols)</h2>
-          <p style="color:var(--text-muted);font-size:0.9rem;">Top live-token protocols by market capitalization. These protocols already trade on public markets; their values are market-driven and never modeled.</p>
-        </div>
-
-        <div class="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>Protocol</th>
-                <th>Category</th>
-                <th>Chains</th>
-                <th>TVL</th>
-                <th>Market Cap</th>
-                <th>7d Change</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${RADAR.live.map(r => `
-                <tr>
-                  <td><strong>${r.name}</strong> <span style="font-size:0.75rem;color:var(--text-muted)">(${r.slug})</span></td>
-                  <td><span class="badge cat">${r.category || 'Other'}</span></td>
-                  <td>${r.chains ? r.chains.slice(0, 3).join(', ') : ''}</td>
-                  <td>${formatUSD(r.tvl_usd)}</td>
-                  <td class="implied-val">${formatUSD(r.mcap_usd)}</td>
-                  <td class="${(r.change_7d ?? 0) >= 0 ? 'positive' : 'negative'}">${formatPct(r.change_7d)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      </main>
-    `;
-  }
-
-  function renderModel() {
-    const catEntries = Object.entries(RADAR.category_table.categories);
-    return `
-      ${renderHeader()}
-      <main>
-        <div class="explainer-section">
-          <h3>Token Launch Radar Model (${RADAR.model_version})</h3>
-          <p>The radar scans the entire DeFi protocol universe to locate and rank pre-token protocols with high potential. Implied valuation is derived rigorously from on-chain fundamentals without speculation.</p>
-          
-          <div class="formula-box" style="margin:1rem 0;">
-            <strong>Implied Value Formula:</strong><br>
-            <code>TVL × Category Multiple × Growth Multiplier (7d change) × Maturity Multiplier (Age) = Implied Value (USD)</code>
-          </div>
-
-          <p><strong>Category Calibration:</strong> Category multiples are computed dynamically from live-token protocols in the snapshot (filtering out CEX and Bridges, ratio bounds 0.01 &lt; mcap/tvl &lt; 50). Categories with fewer than 3 live comparables fall back to the overall median (<strong>${RADAR.category_table.overall_median}</strong>). All multiples are clamped to [0.05, 2.0].</p>
-
-          <h3 style="margin-top:1.5rem;margin-bottom:0.75rem;">Category Multiples Table</h3>
-          <div class="category-table-grid">
-            ${catEntries.map(([cat, stat]) => `
-              <div class="cat-card">
-                <div class="cat-name">${cat}</div>
-                <div class="cat-stats">
-                  Multiple: <strong>${stat.clamped_multiple.toFixed(3)}</strong><br>
-                  Sample: n=${stat.count} ${stat.used_fallback ? '(fallback)' : ''}<br>
-                  Raw Median: ${stat.raw_median.toFixed(3)}
-                </div>
-              </div>
-            `).join('')}
-          </div>
-
-          <div class="honest-note">
-            <strong>Honesty & Integrity Policy:</strong><br>
-            • Pre-token protocols record no token; they never have none.<br>
-            • No airdrop promises or guarantees are made; farming plans focus on protocol usage and genuine on-chain participation.<br>
-            • All data is sourced directly from the sealed snapshot as of ${RADAR.as_of}.
-          </div>
-        </div>
-      </main>
-    `;
+  function renderTable(rows) {
+    const valueKey = early() ? 'implied_value_usd' : 'mcap_usd';
+    const columns = [
+      ...(early() ? [['rank', 'Rank']] : []),
+      ['name', 'Protocol'], ['category', 'Category'], ['tvl_usd', 'TVL'],
+      ['change_7d', '7-day TVL change'], [valueKey, early() ? 'Implied value' : 'Market cap'],
+    ];
+    get('columns').innerHTML = columns.map(([key, label]) => {
+      const active = sortKey === key;
+      return `<th scope="col"${active ? ` aria-sort="${direction > 0 ? 'ascending' : 'descending'}"` : ''}>
+        <button data-sort="${key}">${label}${active ? (direction > 0 ? ' ↑' : ' ↓') : ''}</button></th>`;
+    }).join('');
+    const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+    page = Math.min(page, pages - 1);
+    const start = page * pageSize;
+    get('rows').innerHTML = sortRows(rows).slice(start, start + pageSize).map(r => `<tr>
+      ${early() ? `<td>#${r.rank}</td>` : ''}
+      <td><button class="protocol" data-slug="${esc(r.slug)}">${esc(r.name)}</button>
+        ${r.watchlist ? '<span class="flag">Watchlist</span>' : ''}</td>
+      <td>${esc(category(r))}</td><td>${usd(r.tvl_usd)}</td>
+      <td class="${r.change_7d > 0 ? 'up' : r.change_7d < 0 ? 'down' : ''}">${pct(r.change_7d)}</td>
+      <td class="value">${usd(r[valueKey])}</td></tr>`).join('') ||
+      `<tr><td colspan="${columns.length}">No matches. Clear a filter or reset the board.</td></tr>`;
+    get('board-title').textContent = early() ? 'Ranked protocols' : 'Protocols with recorded tokens';
+    get('results').textContent = rows.length
+      ? `${start + 1}–${Math.min(start + pageSize, rows.length)} of ${rows.length} matches · Select a protocol for its plan`
+      : '0 matches';
+    get('page').textContent = `${page + 1} / ${pages}`;
+    get('prev').disabled = page === 0;
+    get('next').disabled = page >= pages - 1;
   }
 
   function render() {
-    const state = parseHash();
-    const app = document.getElementById('app');
-    if (state.view === 'detail') {
-      app.innerHTML = renderDetail();
-    } else if (state.view === 'live') {
-      app.innerHTML = renderLive();
-    } else if (state.view === 'model') {
-      app.innerHTML = renderModel();
-    } else {
-      app.innerHTML = renderBoard();
-    }
+    const rows = filtered();
+    renderStats(rows);
+    renderPlot(rows);
+    renderTable(rows);
   }
 
-  window.addEventListener('hashchange', render);
-  window.addEventListener('DOMContentLoaded', render);
+  function showDetail(row) {
+    const m = row.model;
+    get('detail-name').textContent = row.name;
+    get('detail-tag').textContent = m
+      ? `Rank #${row.rank} · No token recorded${row.watchlist ? ' · Watchlist' : ''}`
+      : `Token recorded${row.symbol ? ` · ${row.symbol}` : ''}`;
+    const age = row.age_days == null ? 'Unreported' : `${row.age_days.toLocaleString('en-US')} days`;
+    get('detail-body').innerHTML = `
+      <p>${esc(category(row))} · ${esc(row.chains.join(', ') || 'Chain unreported')}</p>
+      <div class="kpis detail-kpis">${kpis([
+        [m ? 'Implied launch value' : 'Recorded market cap', usd(m ? row.implied_value_usd : row.mcap_usd)],
+        ['TVL', usd(row.tvl_usd)], ['7-day TVL change', pct(row.change_7d)], ['Tracking age', age],
+      ])}</div>
+      <div class="detail-grid"><section>${m ? `
+        <h3>How the estimate adds up</h3>
+        <p>${usd(row.tvl_usd)} TVL × ${factor(m.multiple)} peers × ${factor(m.growth)} growth × ${factor(m.maturity)} maturity.</p>
+        <p><strong>${exact.format(row.implied_value_usd)}</strong> implied value. Peer spread: ${usd(m.low)}–${usd(m.high)}.</p>
+        <p>${m.localCount} category peers, ${m.broadCount} broad peers. Category contributes ${(100 * m.share).toFixed(1)}% to the log blend.</p>
+        <h3>Nearest ${m.localCount ? 'category' : 'broad'} peers</h3>
+        <ul class="peers">${m.peers.map(peer => `<li><strong>${esc(peer.name)}</strong><br>${usd(peer.tvl)} TVL · ${factor(peer.ratio)} cap / TVL</li>`).join('')}</ul>` : `
+        <h3>Snapshot record</h3>
+        <p>Market cap is shown as recorded. This protocol sits outside the launch ranking.</p>`}
+      </section><section>
+        <h3>Trial plan</h3>
+        <p>Quoted fees and published terms take priority. Trial amounts are estimates and rewards are unconfirmed.</p>
+        <ol class="steps">${row.farm_steps.map(step => `<li>${esc(step)}</li>`).join('')}</ol>
+      </section></div>`;
+    get('detail').showModal();
+  }
+
+  for (const id of filters) {
+    get(id).addEventListener(id === 'search' ? 'input' : 'change', () => {
+      if (id === 'status') {
+        sortKey = early() ? 'rank' : 'mcap_usd';
+        direction = early() ? 1 : -1;
+        updateOptions();
+      }
+      page = 0;
+      render();
+    });
+  }
+
+  get('reset').addEventListener('click', () => {
+    get('search').value = get('chain').value = get('category').value = '';
+    get('status').value = 'early';
+    get('watch').checked = false;
+    page = 0;
+    sortKey = 'rank';
+    direction = 1;
+    updateOptions();
+    render();
+  });
+
+  get('prev').addEventListener('click', () => { page--; renderTable(filtered()); });
+  get('next').addEventListener('click', () => { page++; renderTable(filtered()); });
+  get('columns').addEventListener('click', event => {
+    const button = event.target.closest('[data-sort]');
+    if (!button) return;
+    const key = button.dataset.sort;
+    direction = sortKey === key ? -direction : ['rank', 'name', 'category'].includes(key) ? 1 : -1;
+    sortKey = key;
+    page = 0;
+    renderTable(filtered());
+    get('columns').querySelector(`[data-sort="${key}"]`).focus();
+  });
+  document.addEventListener('click', event => {
+    const button = event.target.closest('[data-slug]');
+    if (button) showDetail(index.get(button.dataset.slug));
+  });
+
+  updateOptions();
   render();
 })();

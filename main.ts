@@ -1,4 +1,4 @@
-// Token Launch Radar Entrypoint (radar-2)
+// Build the offline radar and its canonical make.fun dossier.
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -68,25 +68,8 @@ for (const name of shots) {
 
 writeFileSync(
   join(out, 'dossier.json'),
-  JSON.stringify(
-    buildDossier(out, {
-      text_max_bytes: TEXT_MAX_BYTES,
-      screenshots: SCREENSHOT_CAPS,
-      dashboard: { max_files: 400, max_bytes: 4_194_304 },
-    }),
-    null,
-    2
-  )
+  buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS,
+    dashboard: { max_files: 400, max_bytes: 4_194_304 } }),
 );
 
-// Print category multiples table with shrinkage provenance
-process.stdout.write(`\n=== CATEGORY MULTIPLES TABLE (Shrinkage k=5 applied, Global Fallback: ${radar.category_table.overall_median}) ===\n`);
-for (const [cat, stat] of Object.entries(radar.category_table.categories)) {
-  process.stdout.write(`  - ${cat.padEnd(25)} multiple: ${stat.clamped_multiple.toFixed(3)} (n=${stat.count}, raw=${stat.raw_median.toFixed(3)}, fallback=${stat.used_fallback})\n`);
-}
-process.stdout.write(`=========================================================================\n`);
-
-process.stdout.write(
-  `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
-    `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`
-);
+console.log(`token radar: ${board.length} ranked rows and ${radar.recorded.length} token records in ${out}`);

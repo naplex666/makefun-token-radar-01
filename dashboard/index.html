@@ -1,15 +1,61 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Token Launch Radar (radar-2) - Best token launch radar with shrinkage-calibrated category multiples, implied value formulas, and actionable farm plans.">
-  <title>Token Launch Radar — radar-2 (Shrinkage Calibrated)</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Token Launch Radar</title>
   <link rel="stylesheet" href="app.css">
+  <script defer src="../data.js"></script>
+  <script defer src="app.js"></script>
 </head>
 <body>
-  <div id="app"></div>
-  <script src="../data.js"></script>
-  <script src="app.js"></script>
+<main>
+  <header>
+    <div class="masthead">
+      <div>
+        <h1>Token Launch Radar</h1>
+        <p>What might a launch be worth? Compare protocols, peers and trial plans.</p>
+      </div>
+      <div class="snapshot">DefiLlama snapshot <time id="date"></time></div>
+    </div>
+    <div class="filters">
+      <label>Search<input id="search" type="search" placeholder="Protocol name or slug"></label>
+      <label>Token record<select id="status"><option value="early">No token recorded</option><option value="recorded">Token recorded</option></select></label>
+      <label>Category<select id="category"><option value="">All categories</option></select></label>
+      <label>Chain<select id="chain"><option value="">All chains</option></select></label>
+      <label class="check"><input id="watch" type="checkbox"> Watchlist only</label>
+      <button id="reset" type="button">Reset</button>
+    </div>
+  </header>
+
+  <p id="missing" hidden>Run main.ts to generate the sealed snapshot data, then open the generated dashboard.</p>
+  <section id="stats" class="kpis" aria-label="Board totals"></section>
+  <section class="chart" aria-labelledby="chart-title">
+    <div class="section-head">
+      <div><h2 id="chart-title">Launch value ranges</h2><p id="chart-note"></p></div>
+      <details class="method"><summary>How values work</summary>
+        <p>TVL × peer multiple × weekly growth factor × maturity factor. We take medians weighted by TVL similarity of circulating market cap divided by TVL, then blend category and broad peers in log space. Stronger category support gets more weight.</p>
+        <p>Growth is capped at −35% and +50%, then square-root scaled. Maturity rises from 0.75× to 1× over three years using DefiLlama tracking age. Missing growth is neutral and missing age uses the minimum. The middle 50% of peer multiples shows spread, not launch odds.</p>
+      </details>
+    </div>
+    <div id="plot"></div>
+  </section>
+
+  <section class="board" aria-labelledby="board-title">
+    <div class="section-head">
+      <div><h2 id="board-title">Ranked protocols</h2><p id="results" aria-live="polite"></p></div>
+      <nav aria-label="Board pages"><button id="prev">Previous</button><span id="page"></span><button id="next">Next</button></nav>
+    </div>
+    <div class="table-scroll" tabindex="0" role="region" aria-label="Protocol table">
+      <table><thead><tr id="columns"></tr></thead><tbody id="rows"></tbody></table>
+    </div>
+  </section>
+
+  <dialog id="detail" aria-labelledby="detail-name">
+    <div class="detail-top"><span id="detail-tag"></span><form method="dialog"><button aria-label="Close protocol detail">Close</button></form></div>
+    <h2 id="detail-name"></h2>
+    <div id="detail-body"></div>
+  </dialog>
+</main>
 </body>
 </html>
